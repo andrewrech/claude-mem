@@ -34,6 +34,7 @@ import { canonicalIntegrationId } from '../shared/integration-id.js';
 import { logger } from '../utils/logger.js';
 import { loadFromFileOnce } from '../shared/hook-settings.js';
 import { isObserverCaptureEnabled } from '../shared/observer-capture.js';
+import { isProjectAllowed } from '../utils/project-filter.js';
 
 export interface HookCommandOptions {
   skipExit?: boolean;
@@ -73,12 +74,28 @@ async function executeHookPipeline(
   adapter: ReturnType<typeof getPlatformAdapter>,
   handler: ReturnType<typeof getEventHandler>,
   platform: string,
+  event: string,
   options: HookCommandOptions
 ): Promise<number> {
   const rawInput = await readJsonFromStdin({ safetyTimeoutMs: options.stdinSafetyTimeoutMs });
-  const input = adapter.normalizeInput(rawInput);
-  input.platform = platform;
-  const result = await handler.execute(input);
+  const settings = loadFromFileOnce();
+  // Antigravity reads transcript content while normalizing input. Check native
+  // checkout evidence first, before any adapter can read it or substitute the
+  // hook process's cwd for missing host evidence under an opt-in policy.
+  const raw = rawInput && typeof rawInput === 'object' ? rawInput as Record<string, unknown> : {};
+  const rawCwd = platform === 'antigravity-cli' && Array.isArray(raw.workspacePaths)
+    ? raw.workspacePaths[0] ?? raw.cwd : raw.cwd;
+  let result = buildNoOpResult(event);
+  if (isProjectAllowed(typeof rawCwd === 'string' ? rawCwd : undefined,
+    settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+    const input = adapter.normalizeInput(rawInput);
+    input.platform = platform;
+    // Also enforce the adapter's final checkout, covering context, file-context,
+    // capture and composed hooks through the same decision.
+    if (isProjectAllowed(input.cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+      result = await handler.execute(input);
+    }
+  }
 
   // MODEL_CONTEXT: the only stdout JSON emit, via the platform adapter.
   emitModelContext(adapter, result);
@@ -140,7 +157,7 @@ export async function hookCommand(rawPlatform: string, event: string, options: H
   const handler = getEventHandler(event);
 
   try {
-    return await executeHookPipeline(adapter, handler, platform, options);
+    return await executeHookPipeline(adapter, handler, platform, event, options);
   } catch (error) {
     // A closed or failed stdout pipe cannot accept a replacement envelope.
     // Preserve the delivery failure instead of reporting success or double-emitting.

@@ -1,6 +1,6 @@
 
 import { relative, isAbsolute, join, normalize } from 'path';
-import { isProjectExcluded } from '../utils/project-filter.js';
+import { isProjectAllowed } from '../utils/project-filter.js';
 import { loadFromFileOnce } from './hook-settings.js';
 import {
   CLAUDE_CONFIG_DIR,
@@ -33,7 +33,6 @@ function isWithin(child: string, parent: string): boolean {
 
 export function shouldTrackProject(cwd: string): boolean {
   if (process.env.CLAUDE_MEM_INTERNAL === '1') return false;
-  if (!cwd) return true;
   if (isWithin(cwd, OBSERVER_SESSIONS_DIR)) {
     return false;
   }
@@ -41,7 +40,7 @@ export function shouldTrackProject(cwd: string): boolean {
     return false;
   }
   const settings = loadFromFileOnce();
-  return !isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS);
+  return isProjectAllowed(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS);
 }
 
 export function shouldEmitProjectRow(project: string | null | undefined): boolean {

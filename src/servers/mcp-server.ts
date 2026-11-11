@@ -75,6 +75,9 @@ import { getRequestCwd, runWithCwd } from './request-context.js';
 import { parseHttpArgs, startMcpHttpServer, type CwdResolver, type McpHttpOptions } from './mcp-http.js';
 import { createStdioCwdResolver } from './mcp-project-cwd.js';
 import { buildWorkerOriginPolicy } from '../services/worker/http/origin-policy.js';
+import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
+import { USER_SETTINGS_PATH } from '../shared/paths.js';
+import { isProjectAllowed } from '../utils/project-filter.js';
 
 /**
  * The checkout of the running tool call, resolved once per directory. Over stdio that is
@@ -1258,7 +1261,16 @@ function createMcpServer(getCwd?: CwdResolver): Server {
 
     try {
       const args = request.params.arguments || {};
-      const cwd = getCwd ? getCwd(extra) : await stdioCwd!.resolve();
+      const beforeRoots = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_INCLUDED_PROJECTS;
+      const requireFreshRoots = typeof beforeRoots !== 'string' || beforeRoots.trim() !== '';
+      const cwd = getCwd ? getCwd(extra) : await stdioCwd!.resolve({ requireFreshRoots });
+      // MCP servers outlive turns. Re-read on every call so removing a root
+      // stops both memory tools and file context without restarting the agent.
+      // Read again after roots/list, which may have waited for the client.
+      const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+      if (!isProjectAllowed(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+        return { content: [{ type: 'text' as const, text: 'Memory is not enabled for this project.' }], isError: true };
+      }
       const result = await runWithCwd(cwd, () => tool.handler(args));
       spoolWorkStateMcpResult(tool.name, result);
       return result;
@@ -1368,6 +1380,12 @@ function checkMarketplaceMarker(): void {
 
 function scheduleWorkerAutostart(): void {
   setTimeout(async () => {
+    // With project opt-in, an MCP process may have been launched outside an
+    // enabled root (or before roots/list is available). The first permitted
+    // tool call can connect normally; startup alone must not launch memory.
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const includedProjects = settings.CLAUDE_MEM_INCLUDED_PROJECTS;
+    if (typeof includedProjects !== 'string' || includedProjects.trim()) return;
     // Phase 8 — when CLAUDE_MEM_RUNTIME=server (or legacy `server-beta`,
     // normalized to `'server'` by selectRuntime), MCP must NOT auto-start
     // the worker. observation_* tools talk to the server runtime directly;

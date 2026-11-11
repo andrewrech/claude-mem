@@ -1206,6 +1206,8 @@ var init_SettingsDefaultsManager = __esm({
         // #4745 — opt-in: also redact un-prefixed credentials (password=, *_TOKEN=, *_SECRET=, *_API_KEY=, Authorization: Bearer, Authorization: Basic)
         CLAUDE_MEM_EXCLUDED_PROJECTS: "",
         // Comma-separated glob patterns for excluded project paths
+        CLAUDE_MEM_INCLUDED_PROJECTS: "",
+        // JSON absolute root paths; unset = exclusion-only, [] = no projects
         CLAUDE_MEM_PROJECT_ENVIRONMENTS: "[]",
         // JSON array of {"name","patterns","inherit"?}: directories matching an environment's globs share one project named after it; an explicit inherit list replaces the derived read keys ([] reads only the environment)
         CLAUDE_MEM_FOLDER_MD_EXCLUDE: "[]",
@@ -2255,7 +2257,7 @@ var init_worktree = __esm({
 });
 
 // src/utils/project-filter.ts
-import { basename as basename5 } from "path";
+import { basename as basename5, isAbsolute as isAbsolute2, relative, sep as sep2 } from "path";
 function globToRegex(pattern) {
   let expanded = expandHome(pattern.replace(/\\/g, "/"));
   expanded = expanded.replace(/\\/g, "/");
@@ -2391,8 +2393,8 @@ function realpathOrSelf2(dir) {
   }
 }
 function isWithin(child, parent) {
-  const relative = path2.relative(parent, child);
-  return relative === "" || !relative.startsWith("..") && !path2.isAbsolute(relative);
+  const relative2 = path2.relative(parent, child);
+  return relative2 === "" || !relative2.startsWith("..") && !path2.isAbsolute(relative2);
 }
 function markerWalkStops() {
   return [homedir7(), tmpdir(), CLAUDE_CONFIG_DIR].flatMap((dir) => {
@@ -2530,9 +2532,9 @@ function buildWorktreeProjectKey(parentProjectName, worktreeName) {
 }
 function submoduleLeaf(info, repoRoot) {
   if (!info.isSubmodule || !info.parentRepoPath) return null;
-  const relative = path2.relative(info.parentRepoPath, repoRoot);
-  if (!relative || relative === ".." || relative.startsWith(`..${path2.sep}`) || path2.isAbsolute(relative)) return null;
-  return relative.split(path2.sep).join("/");
+  const relative2 = path2.relative(info.parentRepoPath, repoRoot);
+  if (!relative2 || relative2 === ".." || relative2.startsWith(`..${path2.sep}`) || path2.isAbsolute(relative2)) return null;
+  return relative2.split(path2.sep).join("/");
 }
 function getProjectContext(cwd, platform = process.platform) {
   return getProjectContextWithRoot(cwd, platform).context;
@@ -2627,7 +2629,7 @@ var init_project_name = __esm({
 // src/services/work-view/session-project.mjs
 import { existsSync as existsSync10, realpathSync as realpathSync4 } from "node:fs";
 import { homedir as homedir8, tmpdir as tmpdir2 } from "node:os";
-import { basename as basename6, dirname as dirname5, join as join9, resolve as resolve3, sep as sep2 } from "node:path";
+import { basename as basename6, dirname as dirname5, join as join9, resolve as resolve3, sep as sep3 } from "node:path";
 function projectRoot(project, gitRemoteNames = useGitRemoteProjectNames()) {
   if (typeof project !== "string") return null;
   return gitRemoteNames ? project : project.split("/")[0];
@@ -2643,7 +2645,7 @@ function isAgentScratchFolder(folder) {
   if (typeof folder !== "string" || !folder) return false;
   if (CODEX_SCRATCH.test(folder)) return true;
   const absolute = resolve3(folder);
-  return TEMP_FOLDERS.some((temp) => absolute === temp || absolute.startsWith(`${temp}${sep2}`));
+  return TEMP_FOLDERS.some((temp) => absolute === temp || absolute.startsWith(`${temp}${sep3}`));
 }
 function repoRootOf(path4) {
   const visited = [];

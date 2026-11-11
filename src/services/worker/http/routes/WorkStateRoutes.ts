@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { validateBody } from '../middleware/validateBody.js';
-import { isProjectExcluded } from '../../../../utils/project-filter.js';
+import { isProjectAllowed } from '../../../../utils/project-filter.js';
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { getProjectContext } from '../../../../utils/project-name.js';
@@ -88,7 +88,7 @@ export class WorkStateRoutes extends BaseRouteHandler {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
 
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    if (isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
+    if (!isProjectAllowed(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
       logger.debug('WORKER', 'Work state write skipped for an excluded project', { cwd, list });
       res.send('Not saved: this project is excluded from claude-mem (CLAUDE_MEM_EXCLUDED_PROJECTS).');
       return;
@@ -144,6 +144,12 @@ export class WorkStateRoutes extends BaseRouteHandler {
     }
     const list = typeof req.query.list === 'string' && req.query.list.trim() ? req.query.list.trim() : undefined;
     const includeClosed = req.query.includeClosed === 'true';
+
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    if (!isProjectAllowed(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+      res.type('text/plain').send('Memory is not enabled for this project.');
+      return;
+    }
 
     const checkout = getProjectContext(cwd);
     const entries = this.dbManager.getSessionStore().getWorkStateEntries(checkout.allProjects, list);

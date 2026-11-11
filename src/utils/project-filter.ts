@@ -1,5 +1,6 @@
 
-import { basename } from 'path';
+import { basename, isAbsolute, relative, sep } from 'path';
+import { realpathSync, statSync } from 'node:fs';
 import { expandHome } from '../shared/expand-home.js';
 import { logger } from './logger.js';
 
@@ -94,4 +95,37 @@ export function isProjectExcluded(projectPath: string, exclusionPatterns: string
   }
 
   return false;
+}
+
+/**
+ * An optional root allowlist for automatic capture and agent memory tools.
+ * Unset preserves the upstream exclusion-only policy; an explicit JSON []
+ * allows no projects. A configured policy never guesses a missing checkout
+ * from a project label. Real paths prevent sibling-prefix and symlink escapes.
+ */
+export function isProjectAllowed(
+  cwd: string | null | undefined,
+  exclusionPatterns: string = '',
+  includedProjects: unknown = '',
+): boolean {
+  if (includedProjects === undefined || (typeof includedProjects === 'string' && includedProjects.trim() === '')) {
+    return !cwd || !isProjectExcluded(cwd, exclusionPatterns);
+  }
+  if (typeof includedProjects !== 'string' || !cwd || !isAbsolute(cwd)) return false;
+  try {
+    const roots: unknown = JSON.parse(includedProjects);
+    if (!Array.isArray(roots) || roots.length > 256 || roots.some(root => typeof root !== 'string' || !isAbsolute(root))) return false;
+    const realCwd = realpathSync.native(cwd);
+    if (!statSync(realCwd).isDirectory()
+      || isProjectExcluded(cwd, exclusionPatterns)
+      || isProjectExcluded(realCwd, exclusionPatterns)) return false;
+    return roots.some(root => {
+      try {
+        const realRoot = realpathSync.native(root);
+        if (!statSync(realRoot).isDirectory()) return false;
+        const child = relative(realRoot, realCwd);
+        return child === '' || (child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child));
+      } catch { return false; }
+    });
+  } catch { return false; }
 }

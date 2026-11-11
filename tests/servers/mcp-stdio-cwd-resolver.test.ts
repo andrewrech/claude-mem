@@ -61,6 +61,37 @@ describe('createStdioCwdResolver', () => {
     expect(fake.listRootsCalls).toBe(2);
   });
 
+  it('refuses stale roots for opt-in, then accepts a verified changed workspace', async () => {
+    const previous = directory('previous');
+    const current = directory('current');
+    const fake = peer({ roots: true, answers: [answerWith(previous), timeOut, answerWith(current)] });
+    const resolver = createStdioCwdResolver({ peer: fake, pluginRoot: directory('plugin'), processCwd: () => previous });
+    expect(await resolver.resolve({ requireFreshRoots: true })).toBe(previous);
+    resolver.markRootsStale();
+    await expect(resolver.resolve({ requireFreshRoots: true })).rejects.toThrow('verified workspace');
+    expect(await resolver.resolve({ requireFreshRoots: true })).toBe(current);
+    expect(fake.listRootsCalls).toBe(3);
+  });
+
+  it('does not guess roots from cwd after exhausted initial lookups under opt-in', async () => {
+    const launch = directory('launch');
+    const fake = peer({ roots: true, answers: [timeOut, timeOut, timeOut] });
+    const resolver = createStdioCwdResolver({ peer: fake, pluginRoot: directory('plugin'), processCwd: () => launch });
+    for (let call = 0; call < MAX_MCP_ROOTS_ATTEMPTS + 2; call++) {
+      await expect(resolver.resolve({ requireFreshRoots: true })).rejects.toThrow('verified workspace');
+    }
+    expect(fake.listRootsCalls).toBe(MAX_MCP_ROOTS_ATTEMPTS);
+    expect(await resolver.resolve()).toBe(launch); // Upstream fallback remains available without opt-in.
+  });
+
+  it('uses the launch directory under opt-in when the client has no roots capability', async () => {
+    const launch = directory('launch');
+    const fake = peer({ roots: false });
+    const resolver = createStdioCwdResolver({ peer: fake, pluginRoot: directory('plugin'), processCwd: () => launch });
+    expect(await resolver.resolve({ requireFreshRoots: true })).toBe(launch);
+    expect(fake.listRootsCalls).toBe(0);
+  });
+
   it('refreshes roots again when the project changes during an in-flight lookup', async () => {
     const previousProject = directory('previous-project');
     const currentProject = directory('current-project');

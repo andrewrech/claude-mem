@@ -192,7 +192,7 @@ export class SessionMessageBuffer {
    * claimed by the request currently in flight so its response can still join
    * file evidence and other source metadata.
    */
-  clearUnclaimed(sessionDbId: number): number {
+  clearUnclaimed(sessionDbId: number, preserveDedup = false): number {
     const list = this.buffers.get(sessionDbId);
     if (!list) return 0;
     const kept = list.filter(message => message.claimed);
@@ -205,11 +205,13 @@ export class SessionMessageBuffer {
     } else {
       this.buffers.set(sessionDbId, kept);
     }
-    // Let discarded work re-enter through transcript replay without forgetting
-    // IDs already confirmed earlier in this process.
+    // A project-policy removal is final for these inputs. Its caller preserves
+    // dedup so selecting the root again cannot replay the discarded work.
     const seen = this.seenToolUseIds.get(sessionDbId);
-    for (const message of removed) {
-      if (message.message.toolUseId) seen?.delete(message.message.toolUseId);
+    if (!preserveDedup) {
+      for (const message of removed) {
+        if (message.message.toolUseId) seen?.delete(message.message.toolUseId);
+      }
     }
     if (seen?.size === 0) this.seenToolUseIds.delete(sessionDbId);
     this.onMutate?.();

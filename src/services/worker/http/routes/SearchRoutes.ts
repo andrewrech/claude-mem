@@ -46,7 +46,7 @@ import { getViewerBaseUrl } from '../../../../shared/worker-utils.js';
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { currentUserSettingsSaveCount } from '../../../../shared/context-invalidation.js';
 import { getProjectContext } from '../../../../utils/project-name.js';
-import { isProjectExcluded } from '../../../../utils/project-filter.js';
+import { isProjectAllowed } from '../../../../utils/project-filter.js';
 import type { ObservationSearchResult, SessionSummarySearchResult } from '../../../sqlite/types.js';
 import { captureEvent } from '../../../telemetry/telemetry.js';
 import { telemetryBuffer } from '../../../telemetry/buffer.js';
@@ -409,14 +409,11 @@ export class SearchRoutes extends BaseRouteHandler {
     const hostSessionId = showLastMessage && typeof req.query.sessionId === 'string' ? req.query.sessionId : undefined;
     // An excluded checkout receives no context, whether the host names its
     // projects itself (a DSH project override) or leaves them to the worker.
-    if (hostCwd.trim()) {
-      const excludedProjects = process.env.CLAUDE_MEM_EXCLUDED_PROJECTS
-        ?? this.getCachedSettings().CLAUDE_MEM_EXCLUDED_PROJECTS;
-      if (isProjectExcluded(hostCwd, excludedProjects)) {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.send('');
-        return;
-      }
+    const projectSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    if (!isProjectAllowed(hostCwd, projectSettings.CLAUDE_MEM_EXCLUDED_PROJECTS, projectSettings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.send('');
+      return;
     }
     // A host that cannot run the project resolver itself (the OMP hook) sends
     // its cwd instead: read the keys the CLI context hook sends for that checkout.
@@ -644,13 +641,12 @@ export class SearchRoutes extends BaseRouteHandler {
 
     // Resolve the same checkout keys as /api/context/inject when none were named.
     const hostCwd = typeof req.body?.cwd === 'string' ? req.body.cwd.trim() : '';
+    const projectSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    if (!isProjectAllowed(hostCwd, projectSettings.CLAUDE_MEM_EXCLUDED_PROJECTS, projectSettings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+      res.json({ context: '', count: 0 });
+      return;
+    }
     if (hostCwd) {
-      const excludedProjects = process.env.CLAUDE_MEM_EXCLUDED_PROJECTS
-        ?? this.getCachedSettings().CLAUDE_MEM_EXCLUDED_PROJECTS;
-      if (isProjectExcluded(hostCwd, excludedProjects)) {
-        res.json({ context: '', count: 0 });
-        return;
-      }
       if (!project && projects.length === 0) {
         const checkout = getProjectContext(hostCwd);
         project = checkout.primary;

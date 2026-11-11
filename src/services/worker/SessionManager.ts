@@ -15,6 +15,7 @@ import { isSimpleTierMessage } from './session/tier-routing.js';
 import { claudeStandInStillServes } from '../../shared/claude-fallback-readiness.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { isObserverCaptureEnabled } from '../../shared/observer-capture.js';
+import { isProjectAllowed } from '../../utils/project-filter.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 
 export const SESSION_END_WRAPUP_GRACE_MS = 5_000;
@@ -933,11 +934,14 @@ export class SessionManager {
     })) {
       // Re-check at every message boundary so a settings-file edit made while
       // a generator is already alive takes effect after its current request.
-      // Clear the RAM-only queue: transcript replay remains the durable
-      // recovery path if capture is enabled again later.
-      if (!isObserverCaptureEnabled(SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH))) {
-        const discarded = await this.clearPendingForSession(sessionDbId);
-        logger.info('SESSION', 'Observer capture disabled at message boundary; discarding buffered work', {
+      // Discard the RAM-only queue. Re-enabling a root permits fresh events,
+      // never replay of the inputs skipped while it was not selected.
+      const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+      const checkoutCwd = this.dbManager.getSessionStore().getSessionCwd?.(sessionDbId);
+      if (!isObserverCaptureEnabled(settings)
+        || !isProjectAllowed(checkoutCwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+        const discarded = this.discardBufferedWork(sessionDbId);
+        logger.info('SESSION', 'Observer capture not allowed at message boundary; discarding buffered work', {
           sessionId: sessionDbId,
           discarded,
         });

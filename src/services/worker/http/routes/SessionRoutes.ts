@@ -26,7 +26,7 @@ import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsMana
 import { isObserverCaptureEnabled } from '../../../../shared/observer-capture.js';
 import { USER_SETTINGS_PATH, ensureObserverSessionsDir } from '../../../../shared/paths.js';
 import { getProjectContext, isProjectKeySource } from '../../../../utils/project-name.js';
-import { isProjectExcluded } from '../../../../utils/project-filter.js';
+import { isProjectAllowed } from '../../../../utils/project-filter.js';
 import { startGeneratorWithProvider } from '../../session/GeneratorRunner.js';
 import { captureEvent } from '../../../telemetry/telemetry.js';
 import { recordWorkStatePrompt, recordWorkStatePrivacy } from '../../../telemetry/work-state.js';
@@ -267,7 +267,15 @@ export class SessionRoutes extends BaseRouteHandler {
     const session = this.sessionManager.getSession(sessionDbId);
     if (!session) return;
 
-    if (!isObserverCaptureEnabled(SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH))) {
+    const captureSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const checkoutCwd = this.dbManager.getSessionStore().getSessionCwd?.(sessionDbId);
+    if (!isProjectAllowed(checkoutCwd, captureSettings.CLAUDE_MEM_EXCLUDED_PROJECTS, captureSettings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+      // Preserve any paid request's claimed evidence, but never send or replay
+      // unclaimed inputs from a root that is no longer selected.
+      this.sessionManager.getMessageBuffer().clearUnclaimed(sessionDbId, true);
+      return;
+    }
+    if (!isObserverCaptureEnabled(captureSettings)) {
       // A request already in flight still needs its claimed messages to join
       // file evidence when the response returns. Drop only work that has not
       // been handed to a provider.
@@ -867,16 +875,14 @@ export class SessionRoutes extends BaseRouteHandler {
     // the same host, so init and capture agree (#3803). A hook that resolved
     // the key itself sends `project` and `projectKeySource`, and those win.
     const checkoutCwd = typeof req.body.cwd === 'string' ? req.body.cwd : '';
-    const checkoutContext = !req.body.project && checkoutCwd.trim() ? getProjectContext(checkoutCwd) : null;
-    // Such a host cannot check the user's project exclusions either (the CLI
-    // hooks do, before they call): skip before any session row exists.
-    if (checkoutContext) {
-      const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-      if (isProjectExcluded(checkoutCwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
-        res.json({ skipped: true, reason: 'project_excluded' });
-        return;
-      }
+    const projectSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    // Check even when a native hook supplied a project key. A key is a label,
+    // not authorization, and settings can change while an agent stays open.
+    if (!isProjectAllowed(checkoutCwd, projectSettings.CLAUDE_MEM_EXCLUDED_PROJECTS, projectSettings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+      res.json({ skipped: true, reason: 'project_excluded' });
+      return;
     }
+    const checkoutContext = !req.body.project && checkoutCwd.trim() ? getProjectContext(checkoutCwd) : null;
     const project = req.body.project || checkoutContext?.primary || 'unknown';
     const projectKeySource = checkoutContext ? checkoutContext.keySource : req.body.projectKeySource;
 

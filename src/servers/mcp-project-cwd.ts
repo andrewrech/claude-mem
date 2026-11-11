@@ -103,7 +103,7 @@ export function createStdioCwdResolver(options: {
   pluginRoot: string;
   processCwd?: () => string;
   pwd?: () => string | undefined;
-}): { resolve(): Promise<string>; markRootsStale(): void } {
+}): { resolve(options?: { requireFreshRoots?: boolean }): Promise<string>; markRootsStale(): void } {
   const { peer, pluginRoot } = options;
   const processCwd = options.processCwd ?? (() => process.cwd());
   const pwd = options.pwd ?? (() => process.env.PWD);
@@ -140,7 +140,7 @@ export function createStdioCwdResolver(options: {
       rootsStale = true;
       rootsAttempts = 0;
     },
-    async resolve() {
+    async resolve({ requireFreshRoots = false }: { requireFreshRoots?: boolean } = {}) {
       const supportsRoots = Boolean(peer.getClientCapabilities()?.roots);
       while (supportsRoots) {
         const wantsRoots = (lastRoots === null || rootsStale)
@@ -159,6 +159,13 @@ export function createStdioCwdResolver(options: {
         await pending;
         if (pendingRevision !== rootsRevision && rootsAttempts < MAX_MCP_ROOTS_ATTEMPTS) continue;
         break;
+      }
+      // A client that announced a workspace change no longer authorizes the
+      // old root. Project opt-in must wait for a successful refresh instead of
+      // falling back to that root or the process launch directory. Clients
+      // without roots capability retain their actual launch-directory source.
+      if (requireFreshRoots && supportsRoots && (rootsStale || lastRoots === null)) {
+        throw new Error('Memory needs a verified workspace; the client project roots could not be refreshed.');
       }
       const resolution = lastRoots ?? resolveMcpProjectCwd({ fallbackCwd: processCwd(), pwd: pwd(), pluginRoot });
       if (!logged || logged.source !== resolution.source || logged.cwd !== resolution.cwd) {

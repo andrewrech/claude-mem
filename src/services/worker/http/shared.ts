@@ -4,7 +4,7 @@ import type { SessionManager } from '../SessionManager.js';
 import type { DatabaseManager } from '../DatabaseManager.js';
 import type { SessionEventBroadcaster } from '../events/SessionEventBroadcaster.js';
 import { stripMemoryTags } from '../../../utils/tag-stripping.js';
-import { isProjectExcluded } from '../../../utils/project-filter.js';
+import { isProjectAllowed } from '../../../utils/project-filter.js';
 import { shouldSkipAgentObservation } from '../../../shared/should-skip-agent-observation.js';
 import { isToolSkipped } from '../../../shared/is-tool-skipped.js';
 import { SettingsDefaultsManager } from '../../../shared/SettingsDefaultsManager.js';
@@ -198,14 +198,13 @@ export async function ingestObservation(payload: ObservationPayload, handoff: In
 
   const platformSource = normalizePlatformSource(payload.platformSource);
   const cwd = typeof payload.cwd === 'string' ? payload.cwd : '';
+  if (!isProjectAllowed(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+    return { ok: true, status: 'skipped', reason: 'project_excluded' };
+  }
   const projectContext = cwd.trim() ? getProjectContext(cwd) : null;
   // Same fallback as session init: an empty project makes cloud sync quarantine
   // every content line the session produces (#4772).
   const project = projectContext?.primary || 'unknown';
-
-  if (cwd && isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
-    return { ok: true, status: 'skipped', reason: 'project_excluded' };
-  }
 
   // Native todo tools are normally excluded from memory generation. Count
   // their bounded identity before that filter, but after project, agent and
@@ -538,10 +537,8 @@ export async function ingestSummarize(
   // recorded in is checked.
   const requestCwd = typeof payload.cwd === 'string' ? payload.cwd.trim() : '';
   const checkoutCwd = requestCwd || store.getSessionCwd(sessionDbId);
-  if (checkoutCwd) {
-    if (isProjectExcluded(checkoutCwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
-      return { status: 'skipped', reason: 'project_excluded' };
-    }
+  if (!isProjectAllowed(checkoutCwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
+    return { status: 'skipped', reason: 'project_excluded' };
   }
 
   if (observedModel || observedBilling) {
@@ -624,7 +621,7 @@ export function ingestDeliverables(
   const nothing = { stored: 0, duplicates: 0, unavailable: 0 };
 
   const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-  if (cwd && isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
+  if (!isProjectAllowed(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
     return { status: 'skipped', reason: 'project_excluded', ...nothing };
   }
   for (const failure of errors ?? []) {
@@ -741,7 +738,7 @@ export function ingestAdvisorCalls(
   const { contentSessionId, platformSource, cwd, transcriptPath, calls } = payload;
 
   const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-  if (cwd && isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
+  if (!isProjectAllowed(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
     return { status: 'skipped', reason: 'project_excluded' };
   }
 
@@ -831,7 +828,7 @@ export function ingestSubagentStop(
   dbManager: DatabaseManager = requireIngestContext().dbManager,
 ): { status: 'stored'; entryId: number } | { status: 'skipped'; reason: string } {
   const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-  if (payload.cwd && isProjectExcluded(payload.cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
+  if (!isProjectAllowed(payload.cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS, settings.CLAUDE_MEM_INCLUDED_PROJECTS)) {
     return { status: 'skipped', reason: 'project_excluded' };
   }
   const project = typeof payload.cwd === 'string' && payload.cwd.trim() ? getProjectContext(payload.cwd).primary : 'unknown';
